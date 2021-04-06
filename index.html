@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="de">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <meta name="theme-color" content="#222129" />
+        <link rel="stylesheet" href="./normalize.css" />
+        <link rel="stylesheet" href="./index.css" />
+        <title>Random Tape</title>
+        <meta name="description" content="Spotify playlist quiz" />
+        <script async>
+            // handle spotify redirect
+            if (window.location.hash.startsWith("#access_token=")) {
+                const searchParams = new URLSearchParams(window.location.hash.replace("#", "?"));
+                localStorage.setItem("spotify-token", searchParams.get("access_token"));
+
+                // replace the hash
+                history.replaceState(null, null, " ");
+            }
+        </script>
+        <script defer src="./index.js"></script>
+        <script defer src="./alpine.min.js"></script>
+
+        <link rel="dns-prefetch" href="https://api.spotify.com" />
+        <link rel="preconnect" href="https://api.spotify.com" />
+    </head>
+    <body x-data="{token}" class="darkmode">
+        <h1>Random Tape</h1>
+        <p>
+            Find out who truely knows what is in their spotify playlists.
+            <br />
+            Setup a small party game in 3 simple steps.
+        </p>
+        <h2>1. Login with your Spotify account</h2>
+        <section class="spotify-login">
+            <a id="spotify-login-button" class="button" x-bind:href="spotify_login_url"
+                >Login with Spotify</a
+            >
+            <div x-show="token" x-cloak class="login-result">
+                <span>Successfully logged in</span>
+                <br />
+                <button class="login-result" x-on:click="logout()">logout</button>
+            </div>
+        </section>
+        <h2>2. Select a playlist</h2>
+
+        <!-- #region playlist selection -->
+        <template x-if="token">
+            <section
+                class="playlist-selection"
+                x-data="{ playlists: [], selected: location.hash.substring(1), error: null }"
+                x-init="fetchPlaylists().then((p) => (playlists = p)).catch((err) => error = err.message)"
+                x-on:hashchange.window="selected = location.hash.substring(1)"
+            >
+                <ul>
+                    <p>from your playlists,</p>
+                    <li x-show="!playlists && !error">Loading your playlists...</li>
+                    <li x-show="!playlists && error">
+                        Error occured while loading your playlists:
+                        <span class="error-message" x-text="error"></span>
+                    </li>
+                    <template
+                        x-if="playlists"
+                        x-for="(playlist, i) in playlists"
+                        :key="playlist.id"
+                    >
+                        <li>
+                            <a
+                                x-bind:class="{ 'active': selected == playlist.id }"
+                                x-bind:href="'#' + playlist.id"
+                                x-text="playlist.name"
+                            ></a>
+                        </li>
+                    </template>
+                    <p>from the charts or another suggested playlists,</p>
+                    <script async>
+                        // recommended playlists
+                        window.RECOMMENDED = [
+                            { id: "37i9dQZEVXbMDoHDwVN2tF", name: "Global Top 50" },
+                            { id: "37i9dQZEVXbJiZcmkrIHGU", name: "Germany Top 50" },
+                            { id: "37i9dQZF1DX4jP4eebSWR9", name: "Top Hits Deutschland" },
+                            { id: "37i9dQZF1DXcBWIGoYBM5M", name: "Today's Top Hits" },
+                            { id: "37i9dQZF1DX0XUsuxWHRQd", name: "RapCaviar" },
+                        ];
+                    </script>
+                    <template x-for="(playlist, i) in RECOMMENDED" :key="playlist.id">
+                        <li>
+                            <a
+                                x-bind:class="{ 'active': selected == playlist.id }"
+                                x-bind:href="'#' + playlist.id"
+                                x-text="playlist.name"
+                            ></a>
+                        </li>
+                    </template>
+                    <p>or from all public playlists</p>
+                    <li>
+                        <label>Spotify Playlist URI:</label>
+                        <input x-on:keydown.enter="handleSpotifyPlaylistURI($event)" />
+                    </li>
+                </ul>
+            </section>
+        </template>
+        <!-- #endregion -->
+
+        <h2>3. Listen to a song and try guessing it</h2>
+
+        <!-- #region main game -->
+        <template x-if="token">
+            <section
+                class="game-view"
+                x-data="{
+                        playlist_id: location.hash.substring(1),
+                        playlist: null,
+                        error_message: null,
+                        playing: false,
+                        i: 0,
+                        revealed: false
+                    }"
+                x-on:hashchange.window="playlist_id = location.hash.substring(1);"
+                x-init="$watch('playlist_id', called_already(() => {
+                        i = 0;
+                        revealed = false;
+                        playing = false;
+                        if(!playlist_id){
+                            playlist = null;
+                            error_message = null;
+                            return;
+                        }
+                        fetchPlaylist(playlist_id)
+                            .then(
+                                (res) => {playlist = res; error_message = null;},
+                                (err) => { console.error(err); playlist = null; error_message = err.message;}
+                            );
+                    }))"
+            >
+                <template x-if="error_message">
+                    <span class="error-message" x-text="error_message"></span>
+                </template>
+                <template x-if="playlist && playlist.tracks.items.length == 1">
+                    <span class="error-message"> The selected playlist is empty. </span>
+                </template>
+
+                <template x-if="playlist && playlist.tracks.items.length >= 1">
+                    <div>
+                        <h4 style="margin-bottom: 0; margin-top: 1rem">
+                            Playing song <span x-text="i+1"></span> from playlist
+                            <a
+                                x-bind:href="playlist.external_urls.spotify"
+                                x-text="playlist.name"
+                            ></a>
+                            (<span x-text="playlist.tracks.items.length"></span> songs with
+                            previews)
+                        </h4>
+                        <div class="player" style="margin-bottom: 0; margin-top: 1rem">
+                            <audio
+                                x-bind:src="playlist.tracks.items[i].track.preview_url"
+                                x-ref="audio"
+                                x-on:pause="playing = false"
+                                x-on:play="playing = true"
+                                x-on:error="
+                                        alert(`The song '${playlist.tracks.items[i].track.name}' should be playing but has no preview...`)
+                                        playlist.tracks.items.splice(i,1);
+                                        if(i == playlist.tracks.items.length){i-=1;}"
+                                loop
+                            ></audio>
+                            <button
+                                x-on:click="$refs.audio.paused ? $refs.audio.play(): $refs.audio.pause()"
+                                x-text="playing ? 'Pause' : 'Play'"
+                            >
+                                Play
+                            </button>
+                            <button x-on:click="revealed = true" x-bind:disabled="revealed">
+                                Reveal
+                            </button>
+                            <button x-on:click="i -= 1" x-bind:disabled="i == 0">Previous</button>
+                            <button
+                                x-on:click="i = (i+1) % playlist.tracks.items.length;
+                                                revealed = false;
+                                                $nextTick(() => $refs.audio.play());"
+                            >
+                                Next
+                            </button>
+                        </div>
+                        <div class="song-card">
+                            <a
+                                class="cover"
+                                x-bind:href="revealed ? playlist.tracks.items[i].track.external_urls.spotify : null"
+                            >
+                                <img
+                                    x-show="revealed"
+                                    x-bind:src="playlist.tracks.items[i].track.album.images[1].url"
+                                />
+                            </a>
+                            <a
+                                class="title"
+                                x-bind:href="revealed ? playlist.tracks.items[i].track.external_urls.spotify : null"
+                                x-text="revealed ? playlist.tracks.items[i].track.name : '*******'"
+                            ></a>
+                            <span class="artist">
+                                <template
+                                    x-if="revealed"
+                                    x-for="(artist, a) in  playlist.tracks.items[i].track.artists"
+                                    :key="artist.name"
+                                >
+                                    <a
+                                        x-bind:href="artist.external_urls.spotify"
+                                        x-text="artist.name + (a ==  playlist.tracks.items[i].track.artists.length-1 ? '': ',')"
+                                    >
+                                    </a>
+                                </template>
+                                <template x-if="!revealed"><a>???</a></template>
+                            </span>
+                        </div>
+                    </div>
+                </template>
+            </section>
+        </template>
+        <!-- #endregion -->
+
+        <!-- #region footer -->
+        <footer>
+            <span
+                >© 2021 courtesy of
+                <a href="https://github.com/Tom-Julux">Tom Julux</a>
+            </span>
+            <span
+                >:: noncommercial and
+                <a href="https://github.com/Tom-Julux/songquiz">open source</a>
+            </span>
+            <span
+                >:: try in
+                <a
+                    x-data="{dark: localStorage.getItem('darkmode') == 'true' }"
+                    x-init="$watch('dark', called_already(()=>{
+                            localStorage.setItem('darkmode', dark);
+                            document.body.classList.toggle('darkmode', dark);
+                        }))"
+                    x-on:click="dark = !dark"
+                    x-text="dark ? 'light mode' : 'dark mode'"
+                ></a>
+            </span>
+        </footer>
+        <!-- #endregion -->
+    </body>
+</html>
