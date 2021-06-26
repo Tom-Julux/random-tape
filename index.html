@@ -230,12 +230,14 @@
             <span
                 >:: try in
                 <a
+                    tabindex="0"
                     x-data="{dark: localStorage.getItem('darkmode') == 'true' }"
                     x-init="$watch('dark', called_already(()=>{
                             localStorage.setItem('darkmode', dark);
                             document.body.classList.toggle('darkmode', dark);
                         }))"
                     x-on:click="dark = !dark"
+                    x-on:keydown.enter="dark = !dark"
                     x-text="dark ? 'light mode' : 'dark mode'"
                 ></a>
             </span>
